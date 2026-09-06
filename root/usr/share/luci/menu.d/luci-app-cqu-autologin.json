@@ -1,0 +1,14 @@
+{
+	"admin/services/cqu-autologin": {
+		"title": "校园网自动登录",
+		"order": 80,
+		"action": {
+			"type": "view",
+			"path": "cqu-autologin"
+		},
+		"depends": {
+			"acl": [ "luci-app-cqu-autologin" ]
+		}
+	}
+}
+

@@ -1,0 +1,12 @@
+{
+	"luci-app-cqu-autologin": {
+		"description": "允许管理校园网自动登录",
+		"read": {
+			"uci": [ "cqu-autologin" ]
+		},
+		"write": {
+			"uci": [ "cqu-autologin" ]
+		}
+	}
+}
+

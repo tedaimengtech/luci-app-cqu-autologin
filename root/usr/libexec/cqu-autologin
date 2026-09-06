@@ -1,0 +1,115 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+TAG=cqu-autologin
+LOGIN_URL='http://login.cqu.edu.cn:801/eportal/portal/login'
+
+log() {
+	logger -t "$TAG" -- "$*"
+}
+
+load_config() {
+	config_load cqu-autologin
+	config_get username main username
+	config_get password main password
+	config_get user_agent main user_agent
+	config_get device_type main device_type pc
+	config_get network main network wan
+	config_get check_host main check_host 223.5.5.5
+	config_get interval main interval 30
+	config_get failure_threshold main failure_threshold 2
+	config_get retry_delay main retry_delay 10
+
+	case "$interval" in *[!0-9]*|'') interval=30;; esac
+	case "$failure_threshold" in *[!0-9]*|'') failure_threshold=2;; esac
+	case "$retry_delay" in *[!0-9]*|'') retry_delay=10;; esac
+	[ "$interval" -ge 5 ] || interval=5
+	[ "$failure_threshold" -ge 1 ] || failure_threshold=1
+
+	# ping accepts a hostname, not a URL.
+	check_host="${check_host#http://}"
+	check_host="${check_host#https://}"
+	check_host="${check_host%%/*}"
+	check_host="${check_host%%:*}"
+}
+
+network_info() {
+	local status
+	status="$(ubus call "network.interface.$network" status 2>/dev/null)"
+	l3_device="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null)"
+	user_ip="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)"
+	[ -n "$l3_device" ] || l3_device="$network"
+	[ -n "$user_ip" ] || user_ip="$(ip -4 -o addr show dev "$l3_device" 2>/dev/null | awk 'NR == 1 { sub(/\/.*/, "", $4); print $4 }')"
+	user_mac="$(cat "/sys/class/net/$l3_device/address" 2>/dev/null | tr -d ':')"
+	[ -n "$user_ip" ] && [ -n "$user_mac" ]
+}
+
+online() {
+	ping -c 1 -W 3 "$check_host" >/dev/null 2>&1
+}
+
+login() {
+	local term_type callback js_version response
+	if [ "$device_type" = phone ]; then
+		term_type=2
+		callback=dr1005
+		js_version=4.2
+	else
+		term_type=1
+		callback=dr1004
+		js_version=4.2.2
+	fi
+
+	if [ -z "$username" ] || [ -z "$password" ]; then
+		log '账号或密码为空，跳过登录'
+		return 1
+	fi
+	if ! network_info; then
+		log "无法获取网络接口 $network 的 IPv4 地址或 MAC 地址"
+		return 1
+	fi
+
+	log "检测到网络不可用，正在通过 $l3_device 重新登录"
+	response="$(curl -fsS --connect-timeout 8 --max-time 15 --interface "$l3_device" \
+		-A "$user_agent" -H 'Accept: */*' -H 'Referer: http://login.cqu.edu.cn/' \
+		-G "$LOGIN_URL" \
+		--data-urlencode "callback=$callback" \
+		--data-urlencode 'login_method=1' \
+		--data-urlencode "user_account=,0,$username" \
+		--data-urlencode "user_password=$password" \
+		--data-urlencode "wlan_user_ip=$user_ip" \
+		--data-urlencode 'wlan_user_ipv6=' \
+		--data-urlencode "wlan_user_mac=$user_mac" \
+		--data-urlencode 'wlan_ac_ip=' \
+		--data-urlencode 'wlan_ac_name=' \
+		--data-urlencode "term_ua=$user_agent" \
+		--data-urlencode "term_type=$term_type" \
+		--data-urlencode "jsVersion=$js_version" \
+		--data-urlencode "terminal_type=$term_type" \
+		--data-urlencode "v=$(awk 'BEGIN{srand(); print int(1000+rand()*9001)}')" \
+		--data-urlencode 'lang=zh-cn' 2>&1)"
+	case "$response" in
+		*success*|*成功*) log '登录请求已返回成功'; return 0 ;;
+		*) log "登录请求已完成，将在下次检测时确认网络状态：$(printf '%s' "$response" | cut -c1-180)"; return 0 ;;
+	esac
+}
+
+load_config
+failures=0
+log "服务已启动，监测目标：$check_host"
+
+while :; do
+	if online; then
+		failures=0
+	else
+		failures=$((failures + 1))
+		log "连通性检测失败（$failures/$failure_threshold）"
+		if [ "$failures" -ge "$failure_threshold" ]; then
+			login
+			failures=0
+			sleep "$retry_delay"
+		fi
+	fi
+	sleep "$interval"
+done

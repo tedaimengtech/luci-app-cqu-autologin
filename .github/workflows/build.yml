@@ -1,0 +1,85 @@
+name: Build OpenWrt package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+    paths-ignore:
+      - "README.md"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout package source
+        uses: actions/checkout@v4
+        with:
+          path: package-source
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang flex bison g++ gawk gcc-multilib gettext \
+            git libncurses-dev libssl-dev python3-setuptools rsync swig \
+            unzip zlib1g-dev file wget
+
+      - name: Checkout OpenWrt
+        uses: actions/checkout@v4
+        with:
+          repository: openwrt/openwrt
+          ref: openwrt-24.10
+          path: openwrt
+          fetch-depth: 1
+
+      - name: Prepare feeds and package
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cp -a ../package-source package/luci-app-cqu-autologin
+          rm -rf package/luci-app-cqu-autologin/.git package/luci-app-cqu-autologin/.github
+
+      - name: Configure x86_64 package build
+        working-directory: openwrt
+        run: |
+          cat > .config <<'EOF'
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_DEVICE_generic=y
+          CONFIG_PACKAGE_luci-app-cqu-autologin=m
+          EOF
+          make defconfig
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Build package
+        working-directory: openwrt
+        run: make package/luci-app-cqu-autologin/compile -j"$(nproc)" V=s
+
+      - name: Collect package
+        run: |
+          mkdir -p artifacts
+          find openwrt/bin/packages openwrt/bin/targets -type f \
+            \( -name 'luci-app-cqu-autologin_*.ipk' -o -name 'luci-app-cqu-autologin-*.apk' \) \
+            -exec cp -v {} artifacts/ \;
+          test -n "$(find artifacts -type f -print -quit)"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-cqu-autologin
+          path: artifacts/*
+          if-no-files-found: error
+

@@ -1,0 +1,12 @@
+config main 'main'
+	option enabled '0'
+	option username ''
+	option password ''
+	option user_agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
+	option device_type 'pc'
+	option network 'wan'
+	option check_host '223.5.5.5'
+	option interval '30'
+	option failure_threshold '2'
+	option retry_delay '10'
+
