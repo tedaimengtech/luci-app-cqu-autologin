@@ -12,7 +12,7 @@ on:
       - "README.md"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -74,9 +74,18 @@ jobs:
             -exec cp -v {} artifacts/ \;
           test -n "$(find artifacts -type f -print -quit)"
 
-      - name: Upload package
-        uses: actions/upload-artifact@v4
-        with:
-          name: luci-app-cqu-autologin
-          path: artifacts/*
-          if-no-files-found: error
+      - name: Publish package to latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" \
+              -f sha="${GITHUB_SHA}" -F force=true
+            gh release upload latest artifacts/* --clobber
+            gh release edit latest --title "Latest build" --notes "Built from ${GITHUB_SHA}."
+          else
+            gh release create latest artifacts/* \
+              --target "${GITHUB_SHA}" \
+              --title "Latest build" \
+              --notes "Built from ${GITHUB_SHA}."
+          fi

@@ -1,6 +1,6 @@
 # luci-app-cqu-autologin
 
-重庆大学校园网单账号自动登录 OpenWrt LuCI 插件。它不依赖 mwan3，也不包含多账号或多 VLAN 逻辑。
+重庆大学校园网自动登录 OpenWrt LuCI 插件。
 
 ## 功能
 
@@ -10,28 +10,9 @@
 - 使用 procd 守护进程，配置保存后可重载
 - 日志写入系统日志，标签为 `cqu-autologin`
 
-## 编译
+## 使用
 
-### GitHub Actions（推荐）
-
-仓库推送到 GitHub 的 `main` 或 `master` 分支后会自动编译，也可以在
-“Actions → Build OpenWrt package → Run workflow”中手动触发。编译完成后，
-在该次运行的 Artifacts 区域下载 `luci-app-cqu-autologin` 安装包。
-
-工作流使用 OpenWrt 24.10.4 的 x86_64 预编译 SDK，仅编译本插件及必要依赖；
-由于本插件架构为 `all`，生成的安装包本身不绑定 x86_64 架构。
-
-### 本地编译
-
-将整个 `luci-app-cqu-autologin` 目录复制到 OpenWrt 源码的 `package/` 目录，然后运行：
-
-```sh
-make menuconfig
-# LuCI -> Applications -> luci-app-cqu-autologin
-make package/luci-app-cqu-autologin/compile V=s
-```
-
-生成的 ipk/apk 安装后，在 LuCI 的“服务 → 校园网自动登录”中配置。保存并应用后，建议执行一次：
+从 [Releases](https://github.com/tedaimengtech/luci-app-cqu-autologin/releases) 下载并安装软件包，然后在 LuCI 的“服务 → 校园网自动登录”中配置。保存并应用后，建议执行一次：
 
 ```sh
 /etc/init.d/cqu-autologin enable
