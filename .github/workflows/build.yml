@@ -17,7 +17,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 30
+
+    env:
+      OPENWRT_RELEASE: 24.10.4
+      OPENWRT_TARGET: x86/64
 
     steps:
       - name: Checkout package source
@@ -29,49 +33,43 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk gcc-multilib gettext \
-            git libncurses-dev libssl-dev python3-setuptools rsync swig \
-            unzip zlib1g-dev file wget
+            build-essential clang flex bison g++ gawk gettext git \
+            libncurses-dev libssl-dev python3-setuptools rsync unzip \
+            zlib1g-dev file wget zstd
 
-      - name: Checkout OpenWrt
-        uses: actions/checkout@v4
-        with:
-          repository: openwrt/openwrt
-          ref: openwrt-24.10
-          path: openwrt
-          fetch-depth: 1
+      - name: Download OpenWrt SDK
+        run: |
+          base_url="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${OPENWRT_TARGET}"
+          sdk_file="$(wget -qO- "${base_url}/" \
+            | grep -oE 'openwrt-sdk-[^" ]+\.tar\.zst' \
+            | head -n1)"
+          test -n "$sdk_file"
+          wget -q --show-progress "${base_url}/${sdk_file}"
+          mkdir openwrt-sdk
+          tar --zstd -xf "$sdk_file" -C openwrt-sdk --strip-components=1
 
-      - name: Prepare feeds and package
-        working-directory: openwrt
+      - name: Install LuCI feed and package source
+        working-directory: openwrt-sdk
         run: |
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds install luci-base
           cp -a ../package-source package/luci-app-cqu-autologin
           rm -rf package/luci-app-cqu-autologin/.git package/luci-app-cqu-autologin/.github
 
-      - name: Configure x86_64 package build
-        working-directory: openwrt
+      - name: Configure package
+        working-directory: openwrt-sdk
         run: |
-          cat > .config <<'EOF'
-          CONFIG_TARGET_x86=y
-          CONFIG_TARGET_x86_64=y
-          CONFIG_TARGET_x86_64_DEVICE_generic=y
-          CONFIG_PACKAGE_luci-app-cqu-autologin=m
-          EOF
+          echo 'CONFIG_PACKAGE_luci-app-cqu-autologin=m' > .config
           make defconfig
 
-      - name: Download sources
-        working-directory: openwrt
-        run: make download -j8
-
-      - name: Build package
-        working-directory: openwrt
+      - name: Build only luci-app-cqu-autologin
+        working-directory: openwrt-sdk
         run: make package/luci-app-cqu-autologin/compile -j"$(nproc)" V=s
 
       - name: Collect package
         run: |
           mkdir -p artifacts
-          find openwrt/bin/packages openwrt/bin/targets -type f \
+          find openwrt-sdk/bin/packages -type f \
             \( -name 'luci-app-cqu-autologin_*.ipk' -o -name 'luci-app-cqu-autologin-*.apk' \) \
             -exec cp -v {} artifacts/ \;
           test -n "$(find artifacts -type f -print -quit)"
@@ -82,4 +80,3 @@ jobs:
           name: luci-app-cqu-autologin
           path: artifacts/*
           if-no-files-found: error
-

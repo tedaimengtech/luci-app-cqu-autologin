@@ -18,8 +18,8 @@
 “Actions → Build OpenWrt package → Run workflow”中手动触发。编译完成后，
 在该次运行的 Artifacts 区域下载 `luci-app-cqu-autologin` 安装包。
 
-工作流基于 OpenWrt 24.10 的 x86_64 配置构建；由于本插件架构为 `all`，生成的
-安装包本身不绑定 x86_64 架构。
+工作流使用 OpenWrt 24.10.4 的 x86_64 预编译 SDK，仅编译本插件及必要依赖；
+由于本插件架构为 `all`，生成的安装包本身不绑定 x86_64 架构。
 
 ### 本地编译
 
