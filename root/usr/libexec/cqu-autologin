@@ -17,6 +17,9 @@ load_config() {
 	config_get device_type main device_type pc
 	config_get network main network wan
 	config_get check_host main check_host 223.5.5.5
+	config_get_bool ipv6_enabled main ipv6_enabled 1
+	config_get ipv6_network main ipv6_network wan6
+	config_get check_host6 main check_host6 2400:3200::1
 	config_get interval main interval 30
 	config_get failure_threshold main failure_threshold 2
 	config_get retry_delay main retry_delay 10
@@ -46,7 +49,28 @@ network_info() {
 }
 
 online() {
-	ping -c 1 -W 3 "$check_host" >/dev/null 2>&1
+	ping -4 -c 1 -W 3 "$check_host" >/dev/null 2>&1
+}
+
+online6() {
+	ping -6 -c 1 -W 3 "$check_host6" >/dev/null 2>&1
+}
+
+restart_ipv6() {
+	# Never take down the IPv4 login interface.
+	if [ -z "$ipv6_network" ] || [ "$ipv6_network" = "$network" ]; then
+		log 'IPv6 接口必须独立于 IPv4 接口，跳过重启'
+		return 1
+	fi
+	log "IPv4 正常而 IPv6 连续失败，正在重启接口 $ipv6_network"
+	if ! ubus call "network.interface.$ipv6_network" down >/dev/null 2>&1; then
+		log "IPv6 接口 $ipv6_network 停止失败"
+		return 1
+	fi
+	if ! ubus call "network.interface.$ipv6_network" up >/dev/null 2>&1; then
+		log "IPv6 接口 $ipv6_network 启动失败"
+		return 1
+	fi
 }
 
 login() {
@@ -95,21 +119,45 @@ login() {
 	esac
 }
 
-load_config
-failures=0
-log "服务已启动，监测目标：$check_host"
+check_connectivity() {
+	local ipv4_online=0 ipv6_online=0
+	online && ipv4_online=1
+	if [ "$ipv6_enabled" -eq 1 ]; then
+		online6 && ipv6_online=1
+		if [ "$ipv6_online" -eq 1 ]; then
+			failures6=0
+		else
+			failures6=$((failures6 + 1))
+			log "IPv6 连通性检测失败（$failures6/$failure_threshold）"
+		fi
+	fi
 
-while :; do
-	if online; then
+	if [ "$ipv4_online" -eq 1 ]; then
 		failures=0
+		if [ "$ipv6_enabled" -eq 1 ] && [ "$failures6" -ge "$failure_threshold" ]; then
+			restart_ipv6
+			failures6=0
+			sleep "$retry_delay"
+		fi
 	else
 		failures=$((failures + 1))
-		log "连通性检测失败（$failures/$failure_threshold）"
+		log "IPv4 连通性检测失败（$failures/$failure_threshold）"
 		if [ "$failures" -ge "$failure_threshold" ]; then
 			login
 			failures=0
+			failures6=0
 			sleep "$retry_delay"
 		fi
 	fi
+}
+
+load_config
+failures=0
+failures6=0
+log "服务已启动，IPv4 监测目标：$check_host"
+[ "$ipv6_enabled" -eq 1 ] && log "IPv6 监测目标：$check_host6，恢复接口：$ipv6_network"
+
+while :; do
+	check_connectivity
 	sleep "$interval"
 done
