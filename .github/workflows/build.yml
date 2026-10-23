@@ -26,6 +26,8 @@ jobs:
     env:
       OPENWRT_RELEASE: 24.10.4
       OPENWRT_TARGET: x86/64
+      # Bump to rebuild the SDK and refresh all feeds.
+      SDK_CACHE_VERSION: 1
 
     steps:
       - name: Checkout package source
@@ -49,7 +51,15 @@ jobs:
             libncurses-dev libssl-dev python3-setuptools rsync unzip \
             zlib1g-dev file wget zstd
 
+      - name: Restore prepared OpenWrt SDK
+        id: sdk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt-sdk
+          key: openwrt-sdk-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-${{ env.OPENWRT_RELEASE }}-${{ env.OPENWRT_TARGET }}-v${{ env.SDK_CACHE_VERSION }}
+
       - name: Download OpenWrt SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           base_url="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${OPENWRT_TARGET}"
           sdk_file="$(wget -qO- "${base_url}/" \
@@ -60,11 +70,23 @@ jobs:
           mkdir openwrt-sdk
           tar --zstd -xf "$sdk_file" -C openwrt-sdk --strip-components=1
 
-      - name: Install LuCI feed and package source
+      - name: Prepare LuCI feed
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
         working-directory: openwrt-sdk
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install luci-base
+
+      - name: Save prepared OpenWrt SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: openwrt-sdk
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
+
+      - name: Install current package source
+        working-directory: openwrt-sdk
+        run: |
           cp -a ../package-source package/luci-app-cqu-autologin
           rm -rf package/luci-app-cqu-autologin/.git package/luci-app-cqu-autologin/.github
 
