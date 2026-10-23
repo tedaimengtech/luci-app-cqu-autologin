@@ -27,7 +27,7 @@ jobs:
       OPENWRT_RELEASE: 24.10.4
       OPENWRT_TARGET: x86/64
       # Bump to rebuild the SDK and refresh all feeds.
-      SDK_CACHE_VERSION: 2
+      SDK_CACHE_VERSION: 3
 
     steps:
       - name: Checkout package source
@@ -35,21 +35,20 @@ jobs:
         with:
           path: package-source
 
-      - name: Generate time-based version
-        id: version
+      - name: Ensure host dependencies
         run: |
-          timestamp="$(TZ=Asia/Shanghai date +'%Y.%m.%d.%H%M%S')"
-          version="${timestamp}.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
-          echo "package_version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk gettext git \
-            libncurses-dev libssl-dev python3-setuptools rsync unzip \
-            zlib1g-dev file wget zstd
+          packages=(build-essential flex bison gawk gettext git libncurses-dev
+                    libssl-dev python3-setuptools rsync unzip zlib1g-dev file wget zstd)
+          missing=()
+          for package in "${packages[@]}"; do
+            if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+              missing+=("$package")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${missing[@]}"
+          fi
 
       - name: Restore prepared OpenWrt SDK
         id: sdk-cache
@@ -58,7 +57,7 @@ jobs:
           path: openwrt-sdk
           key: openwrt-sdk-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-${{ env.OPENWRT_RELEASE }}-${{ env.OPENWRT_TARGET }}-v${{ env.SDK_CACHE_VERSION }}
 
-      - name: Download OpenWrt SDK
+      - name: Prepare SDK and feeds on cache miss
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
           base_url="https://downloads.openwrt.org/releases/${OPENWRT_RELEASE}/targets/${OPENWRT_TARGET}"
@@ -70,26 +69,9 @@ jobs:
           mkdir openwrt-sdk
           tar --zstd -xf "$sdk_file" -C openwrt-sdk --strip-components=1
 
-      - name: Prepare LuCI feed
-        if: steps.sdk-cache.outputs.cache-hit != 'true'
-        working-directory: openwrt-sdk
-        run: |
+          cd openwrt-sdk
           ./scripts/feeds update -a
           ./scripts/feeds install luci-base
-
-      - name: Prepare LuCI host tools
-        if: steps.sdk-cache.outputs.cache-hit != 'true'
-        working-directory: openwrt-sdk
-        run: |
-          printf '%s\n' \
-            'CONFIG_ALL=n' \
-            'CONFIG_ALL_NONSHARED=n' \
-            'CONFIG_ALL_KMODS=n' > .config
-          make defconfig
-          # Build host tools only, never the target-side LuCI runtime.
-          make package/lua/host/compile -j"$(nproc)" V=s
-          make package/luci-base/host/compile -j"$(nproc)" V=s
-          test -x staging_dir/hostpkg/bin/jsmin
 
       - name: Save prepared OpenWrt SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
@@ -98,31 +80,35 @@ jobs:
           path: openwrt-sdk
           key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
 
-      - name: Install current package source
-        working-directory: openwrt-sdk
+      - name: Package plugin and collect artifact
+        id: version
         run: |
-          cp -a ../package-source package/luci-app-cqu-autologin
-          rm -rf package/luci-app-cqu-autologin/.git package/luci-app-cqu-autologin/.github
+          timestamp="$(TZ=Asia/Shanghai date +'%Y.%m.%d.%H%M%S')"
+          version="${timestamp}.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Configure package
-        working-directory: openwrt-sdk
-        env:
-          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
-        run: |
-          sed -i "/^LUCI_TITLE:=/i PKG_VERSION:=${PACKAGE_VERSION}\nPKG_RELEASE:=1" package/luci-app-cqu-autologin/Makefile
+          # Copy only package inputs; never reuse old project sources or output.
+          package_dir=openwrt-sdk/package/luci-app-cqu-autologin
+          mkdir -p "$package_dir"
+          cp package-source/Makefile "$package_dir/"
+          cp -a package-source/htdocs package-source/root "$package_dir/"
+          sed -i "/^LUCI_TITLE:=/i PKG_VERSION:=${version}\nPKG_RELEASE:=1" "$package_dir/Makefile"
+
+          cd openwrt-sdk
           printf '%s\n' \
             'CONFIG_ALL=n' \
             'CONFIG_ALL_NONSHARED=n' \
             'CONFIG_ALL_KMODS=n' \
+            'CONFIG_LUCI_JSMIN=n' \
+            'CONFIG_LUCI_SRCDIET=n' \
+            'CONFIG_LUCI_CSSTIDY=n' \
             'CONFIG_PACKAGE_luci-app-cqu-autologin=m' > .config
           make defconfig
-
-      - name: Build only luci-app-cqu-autologin
-        working-directory: openwrt-sdk
-        run: make package/luci-app-cqu-autologin/compile NO_DEPS=1 -j"$(nproc)" V=s
-
-      - name: Collect package
-        run: |
+          # Pure scripts/assets: no target dependencies or minifier host builds.
+          make package/luci-app-cqu-autologin/compile \
+            NO_DEPS=1 LUCI_MINIFY_JS=0 LUCI_MINIFY_LUA=0 LUCI_MINIFY_CSS=0 \
+            -j"$(nproc)" V=s
+          cd ..
           mkdir -p artifacts
           find openwrt-sdk/bin/packages -type f \
             \( -name 'luci-app-cqu-autologin_*.ipk' -o -name 'luci-app-cqu-autologin-*.apk' \) \

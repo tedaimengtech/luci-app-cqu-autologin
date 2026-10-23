@@ -53,8 +53,10 @@ IPv6 检测达到“连续失败次数”且本轮 IPv4 公网可达时，通过
 
 ### 构建缓存
 
-workflow 缓存已解压的 OpenWrt SDK 、已准备好的 LuCI feed 和打包所需的宿主工具。首次运行需要下载、更新并安装 feed，以及构建 Lua、LuCI 的宿主工具；后续命中缓存时跳过这些步骤，直接复制本次源码并打包。插件使用 `NO_DEPS=1` 构建，不再连带编译 curl、rpcd、ucode 等运行依赖；安装时仍由 opkg 根据依赖声明安装。
+workflow 缓存已解压的 OpenWrt SDK 和准备好的 feeds，命中后跳过下载及 feed 更新、安装。宿主依赖只安装运行器尚未提供的部分，不重复安装已存在的软件包。
 
-缓存按运行平台、SDK 版本、目标平台和 `SDK_CACHE_VERSION` 隔离。需要刷新 feed 时，增加 `.github/workflows/build.yml` 中的 `SDK_CACHE_VERSION`；更换 SDK 版本或目标平台也会自动重新准备。缓存丢失或被清理后会自动重建。宿主机依赖仍在每次运行时安装。
+插件只有 Shell、JavaScript 和配置文件，因此使用 `NO_DEPS=1` 打包，并关闭 JS/Lua/CSS 压缩；不构建 Lua、LuCI 的压缩工具，也不连带编译 curl、rpcd、ucode 等运行依赖。关闭压缩只会让界面文件略大，运行依赖声明仍保留，安装时由 opkg 处理。SDK 自身必要的准备或打包工具仍可能在首次使用时生成。
 
-缓存保存发生在复制项目源码之前，避免把旧项目代码、旧安装包带入下一次发布；插件配置会在每次打包前重新生成。
+缓存按运行平台、SDK 版本、目标平台和 `SDK_CACHE_VERSION` 隔离。需要刷新 feeds 时，增加 `.github/workflows/build.yml` 中的 `SDK_CACHE_VERSION`；更换 SDK 版本或目标平台也会自动重新准备。缓存丢失或被清理后自动重建。
+
+缓存保存发生在复制项目源码之前，不包含旧插件源码和旧安装包；每次仅复制当前提交的 Makefile、htdocs、root 并生成新配置，再完成打包、收集和按时间版本发布。
