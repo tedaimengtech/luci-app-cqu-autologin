@@ -27,7 +27,7 @@ jobs:
       OPENWRT_RELEASE: 24.10.4
       OPENWRT_TARGET: x86/64
       # Bump to rebuild the SDK and refresh all feeds.
-      SDK_CACHE_VERSION: 1
+      SDK_CACHE_VERSION: 2
 
     steps:
       - name: Checkout package source
@@ -77,6 +77,20 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install luci-base
 
+      - name: Prepare LuCI host tools
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        working-directory: openwrt-sdk
+        run: |
+          printf '%s\n' \
+            'CONFIG_ALL=n' \
+            'CONFIG_ALL_NONSHARED=n' \
+            'CONFIG_ALL_KMODS=n' > .config
+          make defconfig
+          # Build host tools only, never the target-side LuCI runtime.
+          make package/lua/host/compile -j"$(nproc)" V=s
+          make package/luci-base/host/compile -j"$(nproc)" V=s
+          test -x staging_dir/hostpkg/bin/jsmin
+
       - name: Save prepared OpenWrt SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -96,12 +110,16 @@ jobs:
           PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
         run: |
           sed -i "/^LUCI_TITLE:=/i PKG_VERSION:=${PACKAGE_VERSION}\nPKG_RELEASE:=1" package/luci-app-cqu-autologin/Makefile
-          echo 'CONFIG_PACKAGE_luci-app-cqu-autologin=m' > .config
+          printf '%s\n' \
+            'CONFIG_ALL=n' \
+            'CONFIG_ALL_NONSHARED=n' \
+            'CONFIG_ALL_KMODS=n' \
+            'CONFIG_PACKAGE_luci-app-cqu-autologin=m' > .config
           make defconfig
 
       - name: Build only luci-app-cqu-autologin
         working-directory: openwrt-sdk
-        run: make package/luci-app-cqu-autologin/compile -j"$(nproc)" V=s
+        run: make package/luci-app-cqu-autologin/compile NO_DEPS=1 -j"$(nproc)" V=s
 
       - name: Collect package
         run: |
